@@ -1,11 +1,13 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Phone, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Contact {
   id: string;
@@ -16,42 +18,99 @@ interface Contact {
 
 const EmergencyContacts = () => {
   const { toast } = useToast();
-  const [contacts, setContacts] = useState<Contact[]>([
-    { id: '1', name: 'Mom', phone: '+1 (555) 123-4567', relationship: 'Mother' },
-    { id: '2', name: 'Best Friend Sarah', phone: '+1 (555) 987-6543', relationship: 'Friend' }
-  ]);
+  const { user } = useAuth();
+  const [contacts, setContacts] = useState<Contact[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newContact, setNewContact] = useState({ name: '', phone: '', relationship: '' });
+  const [loading, setLoading] = useState(false);
 
-  const handleAddContact = () => {
-    if (newContact.name && newContact.phone) {
-      const contact: Contact = {
-        id: Date.now().toString(),
-        ...newContact
-      };
-      setContacts([...contacts, contact]);
-      setNewContact({ name: '', phone: '', relationship: '' });
-      setShowAddForm(false);
+  useEffect(() => {
+    if (user) {
+      fetchContacts();
+    }
+  }, [user]);
+
+  const fetchContacts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('emergency_contacts')
+        .select('*')
+        .eq('user_id', user?.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setContacts(data || []);
+    } catch (error: any) {
+      console.error('Error fetching contacts:', error);
       toast({
-        title: "Contact Added",
-        description: `${newContact.name} has been added to your emergency contacts.`,
+        title: "Error",
+        description: "Failed to load emergency contacts.",
+        variant: "destructive",
       });
     }
   };
 
-  const handleRemoveContact = (id: string) => {
-    setContacts(contacts.filter(contact => contact.id !== id));
-    toast({
-      title: "Contact Removed",
-      description: "Emergency contact has been removed.",
-    });
+  const handleAddContact = async () => {
+    if (newContact.name && newContact.phone && user) {
+      setLoading(true);
+      try {
+        const { error } = await supabase
+          .from('emergency_contacts')
+          .insert({
+            user_id: user.id,
+            name: newContact.name,
+            phone: newContact.phone,
+            relationship: newContact.relationship,
+          });
+
+        if (error) throw error;
+
+        await fetchContacts();
+        setNewContact({ name: '', phone: '', relationship: '' });
+        setShowAddForm(false);
+        toast({
+          title: "Contact Added",
+          description: `${newContact.name} has been added to your emergency contacts.`,
+        });
+      } catch (error: any) {
+        console.error('Error adding contact:', error);
+        toast({
+          title: "Error",
+          description: "Failed to add emergency contact.",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  const handleRemoveContact = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('emergency_contacts')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      await fetchContacts();
+      toast({
+        title: "Contact Removed",
+        description: "Emergency contact has been removed.",
+      });
+    } catch (error: any) {
+      console.error('Error removing contact:', error);
+      toast({
+        title: "Error",
+        description: "Failed to remove emergency contact.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleCallContact = (contact: Contact) => {
-    toast({
-      title: "Calling Emergency Contact",
-      description: `Calling ${contact.name} at ${contact.phone}`,
-    });
+    window.open(`tel:${contact.phone}`, '_self');
   };
 
   return (
@@ -72,7 +131,6 @@ const EmergencyContacts = () => {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Add Contact Form */}
         {showAddForm && (
           <div className="space-y-3 p-4 bg-purple-50 rounded-lg border border-purple-200">
             <div>
@@ -103,8 +161,13 @@ const EmergencyContacts = () => {
               />
             </div>
             <div className="flex space-x-2">
-              <Button onClick={handleAddContact} size="sm" className="bg-green-500 hover:bg-green-600">
-                Add Contact
+              <Button 
+                onClick={handleAddContact} 
+                size="sm" 
+                className="bg-green-500 hover:bg-green-600"
+                disabled={loading}
+              >
+                {loading ? "Adding..." : "Add Contact"}
               </Button>
               <Button 
                 onClick={() => setShowAddForm(false)} 
@@ -117,7 +180,6 @@ const EmergencyContacts = () => {
           </div>
         )}
 
-        {/* Contacts List */}
         <div className="space-y-3">
           {contacts.map((contact) => (
             <div
